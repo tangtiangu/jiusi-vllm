@@ -1620,7 +1620,6 @@ class DeepseekV2Model(nn.Module):
 
             current_hidden, residual, topk_weights, topk_ids, router_logits = \
                 layer.compute_attn_output(positions, hidden_states, residual)
-            print(f"ttg compute_attn_output topk_ids: {topk_ids}", flush=True)
 
             metadata = AFDConnectorMetadata.create_attention_metadata(
                 layer_idx=layer.layer_idx,
