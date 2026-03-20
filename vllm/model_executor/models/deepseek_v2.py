@@ -1706,6 +1706,7 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: IntermediateTensors | None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
+        logger.info(f"ttg exec deepseekv2 model forward")
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
@@ -1735,16 +1736,18 @@ class DeepseekV2Model(nn.Module):
         afd_metadata = forward_ctx.afd_metadata if forward_ctx is not None else None
 
         if afd_metadata is not None:
+            logger.info(f"ttg forward deepseek_v2 model forward, afd_metadata is not None")
             hidden_states, residual = self.forward_m2n(hidden_states, residual, positions, afd_metadata,
                                                        llama_4_scaling)
         else:
+            logger.info(f"ttg forward deepseek_v2 model forward, afd_metadata is None")
             for layer in islice(self.layers, self.start_layer, self.end_layer):
                 hidden_states, residual = layer(
                     positions, hidden_states, residual, llama_4_scaling
                 )
-                logger.info(f"ttg forward deepseek_v2 layer_idx:{layer.layer_idx}, "
+                print(f"ttg forward deepseek_v2 layer_idx:{layer.layer_idx}, "
                             f"hidden_states.shape: {hidden_states.shape}, "
-                            f"hidden_states: {hidden_states}")
+                            f"hidden_states: {hidden_states}", flush=True)
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
