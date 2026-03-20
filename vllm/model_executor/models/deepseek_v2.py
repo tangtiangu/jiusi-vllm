@@ -431,7 +431,11 @@ class DeepseekV2MoE(nn.Module):
             connector_name=self.connector_name
             )
 
-        shared_output, final_hidden_states = fused_moe_out
+        if self.shared_experts is not None:
+            shared_output, final_hidden_states = fused_moe_out
+        else:
+            shared_output = None
+            final_hidden_states = fused_moe_out
 
         # Fix FP16 overflow
         # See DeepseekV2DecoderLayer for more details.
