@@ -431,11 +431,7 @@ class DeepseekV2MoE(nn.Module):
             connector_name=self.connector_name
             )
 
-        if self.shared_experts is not None:
-            shared_output, final_hidden_states = fused_moe_out
-        else:
-            shared_output = None
-            final_hidden_states = fused_moe_out
+        shared_output, final_hidden_states = fused_moe_out
 
         # Fix FP16 overflow
         # See DeepseekV2DecoderLayer for more details.
@@ -1464,12 +1460,16 @@ class DeepseekV2DecoderLayer(nn.Module):
                 else:
                     global_num_experts = self.config.n_routed_experts + num_redundant_experts
                 routed_scaling_factor = getattr(self.config, "routed_scaling_factor", 1.0)
+                num_expert_group = getattr(self.config, "n_group", 1)
+                topk_group = getattr(self.config, "topk_group", 1)
                 topk_weights, topk_ids = afd_connector.select_experts(
                     hidden_states=hidden_states,
                     router_logits=router_logits,
                     top_k=self.top_k,
-                    use_grouped_topk=False,
+                    use_grouped_topk=True,
                     renormalize=True,
+                    topk_group=topk_group,
+                    num_expert_group=num_expert_group,
                     routed_scaling_factor=1.0 if not mix_placement else routed_scaling_factor,
                     e_score_correction_bias=self.gate.e_score_correction_bias,
                     mix_placement=mix_placement,
