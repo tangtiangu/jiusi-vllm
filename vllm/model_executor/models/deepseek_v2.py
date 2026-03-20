@@ -431,23 +431,19 @@ class DeepseekV2MoE(nn.Module):
             connector_name=self.connector_name
             )
 
-        if self.shared_experts is not None:
-            shared_output, final_hidden_states = fused_moe_out
-        else:
-            shared_output = None
-            final_hidden_states = fused_moe_out
+        shared_experts, final_hidden_states = fused_moe_out
 
         # Fix FP16 overflow
         # See DeepseekV2DecoderLayer for more details.
         if hidden_states.dtype != torch.float16:
             final_hidden_states *= self.routed_scaling_factor
         elif self.shared_experts is not None:
-            assert shared_output is not None
-            shared_output *= (1. / self.routed_scaling_factor)
+            assert shared_experts is not None
+            shared_experts *= (1. / self.routed_scaling_factor)
 
         if self.shared_experts is not None:
-            assert shared_output is not None
-            final_hidden_states += shared_output
+            assert shared_experts is not None
+            final_hidden_states += shared_experts
 
         if self.is_sequence_parallel:
             final_hidden_states = tensor_model_parallel_all_gather(
@@ -1659,10 +1655,14 @@ class DeepseekV2Model(nn.Module):
                 )
                 hidden_states = recv_hidden_states
 
+                logger.info(f"ttg forward_m2n deepseek_v2 layer_idx:{layer.layer_idx}, "
+                            f"hidden_states.shape: {hidden_states.shape}, "
+                            f"hidden_states: {hidden_states}")
+
             current_hidden, residual, topk_weights, topk_ids, router_logits = \
                 layer.compute_attn_output(positions, hidden_states, residual)
-            logger.info(f"ttg layer.id: {layer.layer_idx}, current_hidden:{current_hidden.shape}, "
-                        f"current_hidden: {current_hidden}, topk_ids.shape: {topk_ids.shape} topk_ids: {topk_ids}")
+            # logger.info(f"ttg layer.id: {layer.layer_idx}, current_hidden:{current_hidden.shape}, "
+            #             f"current_hidden: {current_hidden}, topk_ids.shape: {topk_ids.shape} topk_ids: {topk_ids}")
 
             metadata = AFDConnectorMetadata.create_attention_metadata(
                 layer_idx=layer.layer_idx,
