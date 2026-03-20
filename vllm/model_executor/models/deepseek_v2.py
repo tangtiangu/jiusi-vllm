@@ -1742,6 +1742,9 @@ class DeepseekV2Model(nn.Module):
                 hidden_states, residual = layer(
                     positions, hidden_states, residual, llama_4_scaling
                 )
+                logger.info(f"ttg forward deepseek_v2 layer_idx:{layer.layer_idx}, "
+                            f"hidden_states.shape: {hidden_states.shape}, "
+                            f"hidden_states: {hidden_states}")
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
