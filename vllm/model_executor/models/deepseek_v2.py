@@ -1468,6 +1468,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                     top_k=self.top_k,
                     use_grouped_topk=True,
                     renormalize=True,
+                    scoring_func=getattr(self.config, "scoring_func", "softmax"),
                     topk_group=topk_group,
                     num_expert_group=num_expert_group,
                     routed_scaling_factor=1.0 if not mix_placement else routed_scaling_factor,
