@@ -1630,6 +1630,9 @@ class DeepseekV2Model(nn.Module):
             # Compute dense layers on attn side.
             if layer.layer_idx < self.first_k_dense_replace:
                 hidden_states, residual = layer(positions, hidden_states, residual)
+                logger.info(f"ttg forward_m2n deepseek_v2 layer_idx:{layer.layer_idx}, "
+                            f"hidden_states.shape: {hidden_states.shape}, "
+                            f"hidden_states: {hidden_states}")
                 hidden_states = apply_dbo_yield(hidden_states)
                 continue
 
@@ -1658,6 +1661,8 @@ class DeepseekV2Model(nn.Module):
 
             current_hidden, residual, topk_weights, topk_ids, router_logits = \
                 layer.compute_attn_output(positions, hidden_states, residual)
+            logger.info(f"ttg layer.id: {layer.layer_idx}, current_hidden:{current_hidden.shape}, "
+                        f"current_hidden: {current_hidden}, topk_ids.shape: {topk_ids.shape} topk_ids: {topk_ids}")
 
             metadata = AFDConnectorMetadata.create_attention_metadata(
                 layer_idx=layer.layer_idx,
