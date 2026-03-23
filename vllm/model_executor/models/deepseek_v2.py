@@ -1467,7 +1467,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                     router_logits=router_logits,
                     top_k=self.top_k,
                     use_grouped_topk=True,
-                    renormalize=True,
+                    renormalize=getattr(self.config, "norm_topk_prob", True),
                     scoring_func=getattr(self.config, "scoring_func", "softmax"),
                     topk_group=topk_group,
                     num_expert_group=num_expert_group,
