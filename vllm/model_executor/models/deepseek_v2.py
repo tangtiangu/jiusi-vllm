@@ -1283,15 +1283,6 @@ class DeepseekV2DecoderLayer(nn.Module):
                             torch.empty(config.n_routed_experts, dtype=torch.float32))
                     else:
                         self.gate.e_score_correction_bias = None
-            # desne layer
-            else:
-                self.mlp = DeepseekV2MLP(
-                    hidden_size=config.hidden_size,
-                    intermediate_size=config.intermediate_size,
-                    hidden_act=config.hidden_act,
-                    quant_config=quant_config,
-                    prefix=f"{prefix}.mlp",
-                )
 
             # Load balancing settings.
             eplb_config = parallel_config.eplb_config
@@ -1470,7 +1461,6 @@ class DeepseekV2DecoderLayer(nn.Module):
                     top_k=self.top_k,
                     use_grouped_topk=True,
                     renormalize=getattr(self.config, "norm_topk_prob", True),
-                    scoring_func=getattr(self.config, "scoring_func", "softmax"),
                     num_expert_group=getattr(self.config, "n_group", 1),
                     topk_group = getattr(self.config, "topk_group", 1),
                     routed_scaling_factor=1.0 if not mix_placement else routed_scaling_factor,
@@ -1625,13 +1615,13 @@ class DeepseekV2Model(nn.Module):
 
         forward_ctx = get_forward_context()
         afd_connector = afd_metadata.afd_connector
+        use_dense_hidden_state_api = (
+            self.connector_name == "camp2pconnector"
+            and hasattr(afd_connector, "send_attn_hidden_states")
+            and hasattr(afd_connector, "recv_ffn_hidden_states")
+        )
+        last_layer_idx = self.start_layer - 1
         for layer in islice(self.layers, self.start_layer, self.end_layer):
-            # Compute dense layers on attn side.
-            if layer.layer_idx < self.first_k_dense_replace:
-                hidden_states, residual = layer(positions, hidden_states, residual)
-                hidden_states = apply_dbo_yield(hidden_states)
-                continue
-
             afd_metadata.afd_stage_idx = forward_ctx.ubatch_idx
             # start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
             # end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
@@ -1646,17 +1636,33 @@ class DeepseekV2Model(nn.Module):
                 for work in recv_handle:
                     work.wait()
 
-            if layer.layer_idx > self.first_k_dense_replace:
+            if layer.layer_idx > self.start_layer:
                 # Pre-computation Receive Phase
-                # TODO:待适配M2N CAMP2P算子metadata
-                recv_hidden_states = afd_connector.recv_ffn_output(
-                    hidden_states=hidden_states,
-                    metadata=None,
-                )
+                # For dense layers on CAMP2P, use dedicated hidden-state receive.
+                if use_dense_hidden_state_api and (layer.layer_idx - 1) < self.first_k_dense_replace:
+                    recv_hidden_states = afd_connector.recv_ffn_hidden_states(
+                        hidden_states=hidden_states,
+                        metadata=None,
+                    )
+                else:
+                    # TODO:待适配M2N CAMP2P算子metadata
+                    recv_hidden_states = afd_connector.recv_ffn_output(
+                        hidden_states=hidden_states,
+                        metadata=None,
+                    )
                 hidden_states = recv_hidden_states
 
             current_hidden, residual, topk_weights, topk_ids, router_logits = \
                 layer.compute_attn_output(positions, hidden_states, residual)
+
+            if use_dense_hidden_state_api and layer.layer_idx < self.first_k_dense_replace:
+                [hidden_states, _] = afd_connector.send_attn_hidden_states(
+                    hidden_states=current_hidden,
+                    metadata=None,
+                )
+                hidden_states = apply_dbo_yield(hidden_states)
+                last_layer_idx = layer.layer_idx
+                continue
 
             metadata = AFDConnectorMetadata.create_attention_metadata(
                 layer_idx=layer.layer_idx,
@@ -1683,12 +1689,19 @@ class DeepseekV2Model(nn.Module):
                 metadata.connector_data.handle = send_attn_handle
 
             hidden_states = apply_dbo_yield(hidden_states)
+            last_layer_idx = layer.layer_idx
 
-        # TODO:待适配M2N CAMP2P算子metadata
-        recv_hidden_states = afd_connector.recv_ffn_output(
-            hidden_states=hidden_states,
-            metadata=afd_metadata
-        )
+        if use_dense_hidden_state_api and last_layer_idx < self.first_k_dense_replace:
+            recv_hidden_states = afd_connector.recv_ffn_hidden_states(
+                hidden_states=hidden_states,
+                metadata=afd_metadata
+            )
+        else:
+            # TODO:待适配M2N CAMP2P算子metadata
+            recv_hidden_states = afd_connector.recv_ffn_output(
+                hidden_states=hidden_states,
+                metadata=afd_metadata
+            )
         hidden_states = recv_hidden_states
 
         return hidden_states, residual
@@ -2032,16 +2045,12 @@ class DeepseekV2ForCausalLM(
                     continue
 
             if self.afd_role == "attention" and self.is_moe_weight(name):
-                # We need to distinguish between MoE layer weights and Dense layer weights.
-                # Dense layers (before first_k_dense_replace) are initialized in Attention role.
+                # In AFD attention role, all decoder FFN (dense + MoE) runs on ffn server.
                 import re
                 layer_match = re.search(r"model\.layers\.(\d+)\.", name)
                 if layer_match:
                     layer_idx = int(layer_match.group(1))
-                    if layer_idx < self.config.first_k_dense_replace:
-                         # This is a dense layer, not an MoE layer, so we should not skip it
-                         pass
-                    else:
+                    if layer_idx < self.config.num_hidden_layers:
                         continue
                 else:
                     continue
