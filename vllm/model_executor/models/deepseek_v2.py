@@ -1629,7 +1629,8 @@ class DeepseekV2Model(nn.Module):
                 hidden_states, residual = layer(positions, hidden_states, residual)
                 logger.info(f"ttg forward_m2n deepseek_v2 layer_idx:{layer.layer_idx}, "
                             f"hidden_states.shape: {hidden_states.shape}, "
-                            f"hidden_states: {hidden_states}")
+                            f"hidden_states: {hidden_states}, residual.shape: {residual.shape}, "
+                            f"residual: {residual}")
                 hidden_states = apply_dbo_yield(hidden_states)
                 continue
 
